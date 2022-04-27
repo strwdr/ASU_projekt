@@ -1,3 +1,6 @@
+# Jakub Budrewicz 2022L
+# Projekt ASU
+
 import argparse
 import pathlib
 import hashlib
