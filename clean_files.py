@@ -4,6 +4,7 @@ import hashlib
 from enum import Enum
 import json
 import stat
+import shutil
 
 EMPTY_MD5SUM = "d41d8cd98f00b204e9800998ecf8427e"
 DEFAULT_CONFIG_PATH = str(pathlib.Path.home()) + "/.clean_files"
@@ -296,9 +297,7 @@ def find_bad_name_files(directories):
     files_set = files_set_x | files_set_y
 
     for (file, hash_file) in files_set:
-
         if any(x in file.name for x in config['bad_characters']):
-            print(file.absolute())
             found_files_groups_list.append([file])
 
     return found_files_groups_list
@@ -364,36 +363,62 @@ def action_name_to_str(action):
 def delete_files(files):
     for file in files:
         print("Deleting file " + str(file.absolute()))
-        # todo delete
+        file.unlink()
 
 
 def move_file(file_path, file_dest_path):
-    pass  # todo
+    file_path_str = str(file_path.absolute())
+    file_dest_path_str = str(file_dest_path.absolute())
+    print("Moving file " + str(file_path.absolute()) + " to " + file_dest_path_str)
+    shutil.move(file_path_str, file_dest_path_str)
 
 
 def copy_file(file_path, file_dest_path):
-    pass  # todo
+    file_path_str = str(file_path.absolute())
+    file_dest_path_str = str(file_dest_path.absolute())
+    print("Copying file " + str(file_path.absolute()) + " to " + file_dest_path_str)
+    shutil.copy(file_path_str, file_dest_path_str)
 
 
 def fix_bad_permissions(file):
-    print("Changing permission to " + config["bad_permissions_auto_replacement"] + "...")
-    # todo
+    chmod_val = config["bad_permissions_auto_replacement"]
+    print("Changing " + str(file.absolute()) + " permissions to " + chmod_val)
+    bnum = bin(int(chmod_val, 8))  # octal to binary
+    dec = int(bnum, 2)  # binary to decimal
+    file.chmod(dec)
+
+
+def rename_file(file, new_name):
+    print("Renaming " + str(file.absolute()) + " to " + new_name + "...")
+    file.rename(new_name)
 
 
 def fix_bad_name(file):
-    pass  # todo
+    global config
+    old_file_name = file.name
+    new_file_name = ""
+    for i in range(len(old_file_name)):
+        if old_file_name[i] in set(config["bad_characters"]):
+            new_file_name += config["bad_characters_auto_replacement"]
+        else:
+            new_file_name += old_file_name[i]
+
+    rename_file(file, new_file_name)
 
 
 def manual_change_name(file):
     print("Please provide new name for file " + str(file.absolute()))
     print("> ", end="")
     new_name = input()
-    print("Renaming " + file.name + " to " + new_name)
-     # todo rename
+    print("Renaming " + file.name + " to " + new_name + "...")
+    rename_file(file, new_name)
 
 
-def replace_old_with_new(file_old, file_new):
-    pass  # todo
+def replace_old_with_new(files):
+    newest_file = get_newest_file(files)
+    for file in files:
+        if file != newest_file:
+            copy_file(newest_file.absolute(), file.absolute())
 
 
 def delete_files_but_keep(files, file_to_keep):
@@ -405,31 +430,61 @@ def delete_files_but_keep(files, file_to_keep):
     delete_files(files_to_delete)
 
 
-def run_action(action, files):
+def get_newest_file(files):
+    max_mod_date = -1
+    max_mod_date_file = None
+    for file in files:
+        mod_date = get_modification_date(file)
+        max_mod_date = max(max_mod_date, mod_date)
+        max_mod_date_file = file
+    return max_mod_date_file
+
+
+def remove_prefix(prefix, s):
+    return s[len(prefix):] if s.startswith(prefix) else None
+
+
+def get_same_path_relative_to_root_in_x(x_root, y_roots, y_dir):
+    p_x_root = pathlib.Path(x_root)
+    x_root_abs_str = str(p_x_root.absolute())
+    for y_root in y_roots:
+        p_y_root = pathlib.Path(y_root)
+        y_root_abs_str = str(p_y_root.absolute())
+        root_relative_path = remove_prefix(y_root_abs_str, y_dir)
+        if root_relative_path is not None:
+            return x_root_abs_str + "/" + root_relative_path
+
+
+def create_directory_path(new_path):
+    p = pathlib.Path(new_path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def create_directory_in_x_from_y(x_root, y_roots, y_dir):
+    new_path = get_same_path_relative_to_root_in_x(x_root, y_roots, y_dir)
+    return create_directory_path(new_path)
+
+
+def run_action(action, files, directories):
+    x_directory = directories[0]
+    y_directories = directories[1:]
+
     if action == Action.DELETE:
         delete_files(files)
-
     elif action == Action.SKIP:
         print("Skipping...")
     elif action == Action.KEEP_NEWEST:
-        max_mod_date = -1
-        max_mod_date_file = None
-        for file in files:
-            mod_date = get_modification_date(file)
-            max_mod_date = max(max_mod_date, mod_date)
-            max_mod_date_file = file
-
-        file_to_keep = max_mod_date_file
+        file_to_keep = get_newest_file(files)
         delete_files_but_keep(files, file_to_keep)
     elif action == Action.AUTO_FIX_MOD:
         fix_bad_permissions(files[0])
     elif action == Action.AUTO_FIX_CHARACTERS:
         fix_bad_name(files[0])
     elif action == Action.MANUAL_CHANGE_NAME:
-        pass
+        manual_change_name(files[0])
     elif action == Action.REPLACE_OLD_WITH_NEW:
-        pass
-
+        replace_old_with_new(files)
     elif action == Action.KEEP_SELECTED:
         index = 1
         print("Select file to keep:")
@@ -439,15 +494,14 @@ def run_action(action, files):
 
         file_to_keep = select_from_list(files)
         delete_files_but_keep(files, file_to_keep)
-
     elif action == Action.MOVE_TO_X:
         file = files[0]
-
-        pass
+        new_path = create_directory_in_x_from_y(x_directory, y_directories, str(file.parent.absolute()))
+        move_file(file, new_path)
     elif action == Action.COPY_TO_X:
         file = files[0]
-
-        pass
+        new_path = create_directory_in_x_from_y(x_directory, y_directories, str(file.parent.absolute()))
+        copy_file(file, new_path)
 
 
 def get_mode_actions(mode):
@@ -522,12 +576,12 @@ def run_mode(mode, directories):
         for files_group in files_groups_list:
             index += 1
             actions = get_mode_actions(mode)
-            print("File(s) found in mode " + mode_to_str(mode) + " [" + str(index) + "]:")
+            print("[" + str(index) + "]: " + str(len(files_group)) + " file(s) found in mode " + mode_to_str(mode))
             for pathlib_file in files_group:
                 addition_str = ""
                 if mode == Mode.FIND_BAD_PERMISSION:
                     addition_str = " (" + str(get_file_permission_hr(pathlib_file)) + ")"
-                print(str(pathlib_file.absolute()) + addition_str)
+                print("\t - " + str(pathlib_file.absolute()) + addition_str)
             if always_action is None:
                 print("Available actions (<index>* to append that action always from now on):")
                 i = 1
@@ -552,7 +606,8 @@ def run_mode(mode, directories):
                 action = actions[select_action_num]
             else:
                 action = actions[always_action]
-            run_action(action, files_group)
+            run_action(action, files_group, directories)
+            print("--------------------------------")
 
 
 def run():
@@ -560,21 +615,10 @@ def run():
     parser.add_argument('directories', metavar='N', type=str, nargs='+',
                         help='directories (first - X dir rest - Y dirs)')
 
-    # parser.add_argument('--remove_duplicates', dest='remove_duplicates', type=str, default="ask",
-    #                     help='remove duplicates from specified directories (true/false/ask) ')
-    # parser.add_argument('--copy_to_X', dest='copy_to_X', type=str, default="ask",
-    #                     help='copy or move all found files to X directory (true/false/move/ask)')
-    # parser.add_argument('--replace_old_versions', dest='replace_old_versions', type=str, default="ask",
-    #                     help='replace file with duplicate names with new  (true/false/ask) ')
-
     config_path = DEFAULT_CONFIG_PATH
-
     load_config(config_path)
-
     args = parser.parse_args()
-
     mode = manual_select_mode()
-
     run_mode(mode, args.directories)
 
 
